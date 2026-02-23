@@ -114,8 +114,10 @@ class BaiduSearchTool(BaseTool):
     
     使用百度千帆搜索 API 进行网络搜索，支持网页、视频、图片、阿拉丁等多种资源类型的搜索。
     需要百度千帆 API Key 进行鉴权。
+
+    注意，工具名必须是英文，不然crewai会过滤
     """
-    name: str = "搜索网络信息"
+    name: str = "search_web"
     description: str = (
         "使用百度搜索引擎查找相关信息，可以按时间范围、指定站点等条件筛选搜索结果。"
         "获得包含标题、链接、内容摘要等详细信息的搜索结果。"
