@@ -17,6 +17,22 @@ skills:
     type: task       # 需要代码执行（docx-js / pandoc）
     enabled: true
 
+  # m3l20：文件系统记忆 Skills
+  - name: memory-save
+    path: ./memory-save
+    type: task       # 写入 workspace/ 文件，需要沙盒 MCP 执行
+    enabled: true
+
+  - name: skill-creator
+    path: ./skill-creator
+    type: task       # 写入 skills/ 目录，需要沙盒 MCP 执行
+    enabled: true
+
+  - name: memory-governance
+    path: ./memory-governance
+    type: task       # 扫描 + 报告 + 清理，需要沙盒 MCP 执行
+    enabled: true
+
   # 预留：参考型 Skill 示例（如品牌规范、代码规范等）
   # - name: brand-guidelines
   #   path: ./brand-guidelines

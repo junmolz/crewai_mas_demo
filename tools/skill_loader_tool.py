@@ -64,10 +64,29 @@ SANDBOX_TOOL_FILTER = create_static_tool_filter(
     ]
 )
 
+# 💡 核心点：默认沙盒挂载描述（m2l16 原始行为）
+# 抽成常量后，可在实例化 SkillLoaderTool 时传入自定义值（见 m3l20）
+DEFAULT_SANDBOX_MOUNT_DESC = (
+    "1. 所有的操作必须在沙盒中执行，不得操作本地文件系统，当前已挂载在沙盒的本地目录为"
+    "./workspace/data:/workspace/data:ro和./workspace/output:/workspace/output:rw\n"
+    "2. 如果需要读取本地文件，则需要本地文件在./workspace/data/目录下，且提供的本地路径会在"
+    "对应沙盒绝对路径的/workspace/data/目录下。如果文件不在./workspace/data/目录下，则需要"
+    "提示用户本地文件路径错误，无法执行任务。\n"
+    "3. 任务预期输出的文件，必须写在沙盒绝对路径的/workspace/output/目录下，且提供的本地路径"
+    "会在对应的./workspace/output/目录下\n"
+    "4. 如遇依赖缺失，先在沙盒中安装再继续"
+)
 
-def build_skill_crew(skill_name: str, skill_instructions: str) -> Crew:
+
+def build_skill_crew(
+    skill_name: str,
+    skill_instructions: str,
+    mount_desc: str = DEFAULT_SANDBOX_MOUNT_DESC,  # 💡 mount_desc 参数：默认保持 m2l16 行为，m3l20 传入新挂载描述
+) -> Crew:
     """
     Sub-Crew 工厂：为指定 Skill 构建一个在 AIO-Sandbox 中执行的 Crew。
+    mount_desc 描述沙盒挂载路径，默认为 m2l16 的 data:ro + output:rw。
+    传入自定义 mount_desc 可适配不同课程的沙盒配置，不影响其他参数。
     """
     sandbox_mcp = MCPServerHTTP(
         url=SANDBOX_MCP_URL,
@@ -95,10 +114,7 @@ def build_skill_crew(skill_name: str, skill_instructions: str) -> Crew:
             "根据以下任务要求，使用你掌握的 Skill 操作规范完成任务。\n\n"
             "任务要求：\n{task_context}\n\n"
             "执行要求：\n"
-            "1. 所有的操作必须在沙盒中执行，不得操作本地文件系统，当前已挂载在沙盒的本地目录为./workspace/data:/workspace/data:ro和./workspace/output:/workspace/output:rw\n"
-            "2. 如果需要读取本地文件，则需要本地文件在./workspace/data/目录下，且提供的本地路径会在对应沙盒绝对路径的/workspace/data/目录下。如果文件不在./workspace/data/目录下，则需要提示用户本地文件路径错误，无法执行任务。\n"
-            "3. 任务预期输出的文件，必须写在沙盒绝对路径的/workspace/output/目录下，且提供的本地路径会在对应的./workspace/output/目录下\n"
-            "4. 如遇依赖缺失，先在沙盒中安装再继续"
+            + mount_desc  # 💡 替换原硬编码挂载字符串，由调用方配置
         ),
         expected_output=(
             "一份结构化的任务执行结果，按照任务要求中的json schema输出。"
@@ -158,12 +174,17 @@ class SkillLoaderTool(BaseTool):
     description: str = ""  # 在 __init__ 中动态构建
     args_schema: type[BaseModel] = SkillLoaderInput
 
+    # 💡 沙盒挂载描述：默认保持 m2l16 行为，传入自定义值适配不同课程
+    # m2l16：SkillLoaderTool()  →  使用 data:ro + output:rw 挂载
+    # m3l20：SkillLoaderTool(sandbox_mount_desc=M3L20_SANDBOX_MOUNT_DESC)  →  workspace:rw
+    sandbox_mount_desc: str = DEFAULT_SANDBOX_MOUNT_DESC
+
     # Pydantic 会把普通 dict 属性当作模型字段，用 PrivateAttr 绕开
     _skill_registry: dict[str, Any] = PrivateAttr(default_factory=dict)
     _instruction_cache: dict[str, Any] = PrivateAttr(default_factory=dict)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, sandbox_mount_desc: str = DEFAULT_SANDBOX_MOUNT_DESC):
+        super().__init__(sandbox_mount_desc=sandbox_mount_desc)
         # 实例级属性，避免类级共享
         self._skill_registry = {}
         self._instruction_cache = {}
@@ -297,6 +318,7 @@ class SkillLoaderTool(BaseTool):
         crew = build_skill_crew(
             skill_name=skill_name,
             skill_instructions=instructions,
+            mount_desc=self.sandbox_mount_desc,  # 💡 透传挂载描述，m3l20 使用自定义挂载
         )
         result = await crew.akickoff(
             inputs={

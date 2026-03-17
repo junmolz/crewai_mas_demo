@@ -1,0 +1,19 @@
+# m3l20 专用沙盒配置
+# 与 m2l16 的区别：workspace 整体挂载为 rw，并额外挂载共享 skills/ 目录
+#
+# 使用前：
+#   1. 确保 crewai_mas_demo/sandbox-docker-compose.yaml 已启动 AIO-Sandbox 基础服务
+#   2. 或直接用本文件覆盖挂载配置运行：
+#      docker compose -f sandbox-docker-compose.yaml up -d
+
+version: "3.8"
+services:
+  aio-sandbox:
+    image: ghcr.io/anthropics/anthropic-quickstarts:computer-use-demo-latest
+    ports:
+      - "8811:8811"   # MCP HTTP port
+    volumes:
+      - ./workspace:/workspace:rw       # 整个 workspace 可读写（memory-save 写这里）
+      - ../skills:/mnt/skills:rw        # 共享 skills 目录（skill-creator 写这里）
+    environment:
+      - MCP_SERVER_PORT=8811
