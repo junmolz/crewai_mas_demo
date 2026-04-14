@@ -82,14 +82,16 @@ def build_skill_crew(
     skill_name: str,
     skill_instructions: str,
     mount_desc: str = DEFAULT_SANDBOX_MOUNT_DESC,  # 💡 mount_desc 参数：默认保持 m2l16 行为，m3l20 传入新挂载描述
+    mcp_url: str = SANDBOX_MCP_URL,  # 💡 mcp_url 参数：m4l25 Manager=8023, Dev=8024
 ) -> Crew:
     """
     Sub-Crew 工厂：为指定 Skill 构建一个在 AIO-Sandbox 中执行的 Crew。
     mount_desc 描述沙盒挂载路径，默认为 m2l16 的 data:ro + output:rw。
     传入自定义 mount_desc 可适配不同课程的沙盒配置，不影响其他参数。
+    mcp_url 指定沙盒 MCP 端点，m4l25 Manager/Dev 各用独立端口。
     """
     sandbox_mcp = MCPServerHTTP(
-        url=SANDBOX_MCP_URL,
+        url=mcp_url,
         #tool_filter=SANDBOX_TOOL_FILTER, # 暂时不使用工具过滤，因为目前工具都用得上
     )
 
@@ -179,12 +181,19 @@ class SkillLoaderTool(BaseTool):
     # m3l20：SkillLoaderTool(sandbox_mount_desc=M3L20_SANDBOX_MOUNT_DESC)  →  workspace:rw
     sandbox_mount_desc: str = DEFAULT_SANDBOX_MOUNT_DESC
 
+    # 💡 沙盒 MCP URL：默认 8022，各课程可传入自定义端口（m4l25 Manager=8023, Dev=8024）
+    sandbox_mcp_url: str = SANDBOX_MCP_URL
+
     # Pydantic 会把普通 dict 属性当作模型字段，用 PrivateAttr 绕开
     _skill_registry: dict[str, Any] = PrivateAttr(default_factory=dict)
     _instruction_cache: dict[str, Any] = PrivateAttr(default_factory=dict)
 
-    def __init__(self, sandbox_mount_desc: str = DEFAULT_SANDBOX_MOUNT_DESC):
-        super().__init__(sandbox_mount_desc=sandbox_mount_desc)
+    def __init__(
+        self,
+        sandbox_mount_desc: str = DEFAULT_SANDBOX_MOUNT_DESC,
+        sandbox_mcp_url: str = SANDBOX_MCP_URL,
+    ):
+        super().__init__(sandbox_mount_desc=sandbox_mount_desc, sandbox_mcp_url=sandbox_mcp_url)
         # 实例级属性，避免类级共享
         self._skill_registry = {}
         self._instruction_cache = {}
@@ -294,7 +303,8 @@ class SkillLoaderTool(BaseTool):
             f"   - 运行脚本示例：如需运行脚本scripts/xxx.py，则调用sandbox_execute_bash且参数为cmd=\"python {_base}/scripts/xxx.py 参数\"，如需可设 cwd=\"{_base}\"。\n"
             f"   - 安装依赖：cmd=\"pip install 包名\"，再重试任务。\n"
             f"2. sandbox_file_operations：统一文件操作。参数：action（必填，'read'|'write'|'list'|'find'|'replace'|'search'）、path（必填，文件或目录绝对路径）、其余见工具说明。\n"
-            f"   - 读取单个文件：action=\"read\", path=\"文件绝对路径\"（示例：如需要获取reference/xxx.md，则调用工具sandbox_file_operations且参数为action=\"read\", path=\"{_base}/reference/xxx.md\"）。\n"
+            f"   - 读取单个文件：action=\"read\", path=\"文件绝对路径\"（示例：action=\"read\", path=\"{_base}/reference/xxx.md\"）。\n"
+            f"   - 写入文件：action=\"write\", path=\"文件绝对路径\", content=\"文件内容\"（先用 sandbox_execute_bash mkdir -p 确保目录存在）。\n"
             f"   - 列出目录：action=\"list\", path=\"目录绝对路径\"（如 path=\"{_base}/reference\"），可选 recursive=true。\n"
             f"   - 按模式查找文件：action=\"find\", path=\"目录\", pattern=\"*.md\"。\n"
             f"3. sandbox_str_replace_editor：编辑文件。参数：command（'view'|'create'|'str_replace'|'insert'）、path（文件路径）等。\n"
@@ -317,19 +327,44 @@ class SkillLoaderTool(BaseTool):
             # 参考型：直接返回指令文本，不启动 Sub-Crew
             return f"<skill_instructions>\n{instructions}\n</skill_instructions>"
 
+        # 任务型：task_context 为空时，返回指令帮助 Agent 理解 Skill 后再调用
+        if not task_context.strip():
+            return (
+                f"<skill_instructions>\n{instructions}\n</skill_instructions>\n\n"
+                "⚠️ 这是任务型 Skill（type: task），需要 task_context 才能执行。\n"
+                "请在下次调用时传入完整的 task_context，包含：\n"
+                "1. 要执行的具体操作（如：发送邮件/读取邮箱）\n"
+                "2. 预期输出格式（JSON schema，必须包含 errcode 和 errmsg 字段）\n"
+                "3. 所有必要的参数值（收件人、发件人、消息内容等）"
+            )
+
         # 任务型：启动独立 Sub-Crew，在沙盒中执行
         # 💡 核心点：每次 build_skill_crew() 返回新实例，防止状态污染
         crew = build_skill_crew(
             skill_name=skill_name,
             skill_instructions=instructions,
             mount_desc=self.sandbox_mount_desc,  # 💡 透传挂载描述，m3l20 使用自定义挂载
+            mcp_url=self.sandbox_mcp_url,        # 💡 透传 MCP URL，m4l25 各角色使用独立端口
         )
-        result = await crew.akickoff(
-            inputs={
-                "task_context": task_context,
-                "skill_name": skill_name,
-            }
-        )
+
+        # 💡 防止 CrewAI 模板引擎对 SKILL.md 中的 {xxx} 占位符报错
+        # （如 mailbox-ops SKILL.md 中的 {role}.json）
+        # 策略：预扫描所有 agent/task 字段，把不在 inputs 中的变量
+        #       设为自引用（{role} → {role}），保持文本不变
+        base_inputs: dict[str, str] = {
+            "task_context": task_context,
+            "skill_name": skill_name,
+        }
+        all_text = ""
+        for _a in crew.agents:
+            all_text += (_a.role or "") + " " + (_a.goal or "") + " " + (_a.backstory or "") + " "
+        for _t in crew.tasks:
+            all_text += (_t.description or "") + " " + (_t.expected_output or "") + " "
+        for var in re.findall(r"\{([A-Za-z_][A-Za-z0-9_\-]*)\}", all_text):
+            if var not in base_inputs:
+                base_inputs[var] = "{" + var + "}"
+
+        result = await crew.akickoff(inputs=base_inputs)
         return str(result)
 
     # ── 异步路径（FastAPI / akickoff 调用链）────────────────────────────────

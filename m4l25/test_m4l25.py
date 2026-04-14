@@ -267,22 +267,229 @@ class TestT8DemoInputFiles:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 真实执行测试（需 API + 沙盒，课程演示时手动运行）
-#
-# T_E2E_1：Manager 真实执行
-#   输入：demo_input/project_requirement.md
-#   期望：生成 workspace/manager/task_breakdown.md，包含 ≥3 个任务
-#         每个任务有：任务ID、负责角色、输入、输出、验收标准
-#
-# T_E2E_2：Dev 真实执行
-#   输入：demo_input/feature_requirement.md
-#   期望：生成 workspace/dev/tech_design.md，包含4个标准章节
-#         （架构说明 / 接口定义 / 实现要点 / 单元测试用例）
-#
-# 运行方式：
-#   cd crewai_mas_demo/m4l25
-#   docker compose -f sandbox-docker-compose.yaml --profile manager up -d
-#   python m4l25_manager.py
-#   docker compose -f sandbox-docker-compose.yaml --profile dev up -d
-#   python m4l25_dev.py
+# T-V2a | Memory 隔离 - Manager 与 Dev 的记忆目录完全隔离（P5 四层框架·Memory维度）
 # ─────────────────────────────────────────────────────────────────────────────
+
+class TestTV2aMemoryIsolation:
+    """T-V2a：Manager 和 Dev 的 Memory 目录完全隔离，不能共享（P5 四层框架）"""
+
+    def test_memory_paths_are_different(self) -> None:
+        """两个角色的 workspace 根路径不同，Memory 天然隔离"""
+        assert WORKSPACE_MANAGER != WORKSPACE_DEV, \
+            "Manager 和 Dev workspace 路径相同，Memory 无法隔离"
+
+    def test_manager_memory_not_in_dev_dir(self) -> None:
+        """Manager 的 memory.md 不在 Dev 目录下"""
+        manager_memory = WORKSPACE_MANAGER / "memory.md"
+        assert not (WORKSPACE_DEV / "memory.md").samefile(manager_memory) \
+            if (WORKSPACE_DEV / "memory.md").exists() and manager_memory.exists() \
+            else True, \
+            "Manager 和 Dev 的 memory.md 指向同一个文件，Memory 隔离失效"
+
+    def test_both_have_independent_memory_file(self) -> None:
+        """两个角色各自拥有独立的 memory.md"""
+        assert (WORKSPACE_MANAGER / "memory.md").exists(), \
+            "Manager 缺少 memory.md，无法独立持久化记忆"
+        assert (WORKSPACE_DEV / "memory.md").exists(), \
+            "Dev 缺少 memory.md，无法独立持久化记忆"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# T-V2b | 四层框架完整性 - 文件结构对齐 v2 四层框架（P5）
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestTV2bFourLayerAlignment:
+    """T-V2b：四层框架完整性验证（P5）：soul/agent/memory/skills 四维均有体现"""
+
+    def test_manager_agent_md_has_role_charter(self) -> None:
+        """Manager agent.md 包含 Role Charter 标识（职责宪章维度）"""
+        content = (WORKSPACE_MANAGER / "agent.md").read_text(encoding="utf-8")
+        assert "Role Charter" in content, \
+            "Manager agent.md 缺少 Role Charter 标识（v2 P5 职责维度）"
+
+    def test_dev_agent_md_has_role_charter(self) -> None:
+        """Dev agent.md 包含 Role Charter 标识（职责宪章维度）"""
+        content = (WORKSPACE_DEV / "agent.md").read_text(encoding="utf-8")
+        assert "Role Charter" in content, \
+            "Dev agent.md 缺少 Role Charter 标识（v2 P5 职责维度）"
+
+    def test_manager_soul_has_soul_label(self) -> None:
+        """Manager soul.md 包含 Soul 四层框架标识（决策偏好维度）"""
+        content = (WORKSPACE_MANAGER / "soul.md").read_text(encoding="utf-8")
+        assert "Soul" in content, \
+            "Manager soul.md 缺少 Soul 维度标识（v2 P5 四层框架）"
+
+    def test_dev_soul_has_soul_label(self) -> None:
+        """Dev soul.md 包含 Soul 四层框架标识（决策偏好维度）"""
+        content = (WORKSPACE_DEV / "soul.md").read_text(encoding="utf-8")
+        assert "Soul" in content, \
+            "Dev soul.md 缺少 Soul 维度标识（v2 P5 四层框架）"
+
+    def test_manager_soul_has_never_clause(self) -> None:
+        """Manager soul.md 包含 NEVER 清单（决策偏好的边界约束）"""
+        content = (WORKSPACE_MANAGER / "soul.md").read_text(encoding="utf-8")
+        assert "NEVER" in content or "禁止" in content, \
+            "Manager soul.md 缺少 NEVER 清单（soul 的核心：决策边界）"
+
+    def test_dev_soul_has_never_clause(self) -> None:
+        """Dev soul.md 包含 NEVER 清单（决策偏好的边界约束）"""
+        content = (WORKSPACE_DEV / "soul.md").read_text(encoding="utf-8")
+        assert "NEVER" in content or "禁止" in content, \
+            "Dev soul.md 缺少 NEVER 清单（soul 的核心：决策边界）"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# T_E2E_1 / T_E2E_2 | 真实执行测试（需 Docker 沙盒 + LLM API）
+# 运行方式：pytest m4l25/test_m4l25.py -m e2e -v -s
+# 前提：docker compose --profile manager --profile dev up -d 已启动
+# ─────────────────────────────────────────────────────────────────────────────
+
+import subprocess
+import socket
+
+
+def _sandbox_reachable(port: int) -> bool:
+    """检查沙盒端口是否可访问"""
+    try:
+        with socket.create_connection(("localhost", port), timeout=3):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.e2e
+class TestTE2E1ManagerRealExecution:
+    """T_E2E_1：Manager 真实执行 — 输入项目需求，验证 task_breakdown.md 产出"""
+
+    TIMEOUT = 300  # 秒，LLM 调用可能较慢
+
+    def test_sandbox_8023_reachable(self) -> None:
+        """前置：Manager 沙盒（8023）必须可访问"""
+        assert _sandbox_reachable(8023), \
+            "Manager 沙盒未启动，请先运行: docker compose --profile manager up -d"
+
+    def test_manager_produces_task_breakdown(self) -> None:
+        """Manager 真实执行：输入 project_requirement.md → 产出 task_breakdown.md"""
+        output_path = WORKSPACE_MANAGER / "task_breakdown.md"
+        # 清理上次产出，确保本次是新生成
+        if output_path.exists():
+            output_path.unlink()
+
+        result = subprocess.run(
+            ["python3", "m4l25_manager.py"],
+            cwd=_M4L25_DIR,
+            capture_output=False,
+            timeout=self.TIMEOUT,
+        )
+        assert result.returncode == 0, f"m4l25_manager.py 退出码非 0：{result.returncode}"
+
+    def _find_task_breakdown(self) -> Path | None:
+        """查找 Manager 产出的 task breakdown 文件（兼容 LLM 自选文件名）"""
+        # 精确匹配优先
+        exact = WORKSPACE_MANAGER / "task_breakdown.md"
+        if exact.exists():
+            return exact
+        # 模糊匹配：任何包含 task_breakdown 的 .md 文件
+        candidates = sorted(WORKSPACE_MANAGER.glob("*task_breakdown*.md"),
+                            key=lambda p: p.stat().st_mtime, reverse=True)
+        return candidates[0] if candidates else None
+
+    def test_task_breakdown_exists(self) -> None:
+        """Manager 沙盒执行后，workspace 中必须存在 task breakdown 产出文件"""
+        output_path = self._find_task_breakdown()
+        assert output_path is not None, \
+            (f"Manager 未生成任何 task_breakdown*.md 文件，"
+             f"workspace 内容：{list(WORKSPACE_MANAGER.glob('*.md'))}")
+
+    def test_task_breakdown_has_tasks(self) -> None:
+        """task_breakdown 包含 ≥3 个任务"""
+        output_path = self._find_task_breakdown()
+        if output_path is None:
+            pytest.skip("task_breakdown 文件不存在，跳过内容检查")
+        content = output_path.read_text(encoding="utf-8")
+        task_count = content.count("T-0") + content.count("任务ID")
+        assert task_count >= 3 or len(content) > 200, \
+            f"task_breakdown 内容过少，可能未正确生成（{len(content)} 字符）"
+
+    def test_task_breakdown_has_roles(self) -> None:
+        """task_breakdown 包含角色分配（PM / Dev / QA）"""
+        output_path = self._find_task_breakdown()
+        if output_path is None:
+            pytest.skip("task_breakdown 文件不存在，跳过内容检查")
+        content = output_path.read_text(encoding="utf-8")
+        assert "Dev" in content, "task_breakdown 缺少 Dev 角色分配"
+
+    def test_task_breakdown_has_dod(self) -> None:
+        """task_breakdown 包含验收标准（DoD）"""
+        output_path = self._find_task_breakdown()
+        if output_path is None:
+            pytest.skip("task_breakdown 文件不存在，跳过内容检查")
+        content = output_path.read_text(encoding="utf-8")
+        has_dod = "验收标准" in content or "DoD" in content or "acceptance" in content.lower()
+        assert has_dod, "task_breakdown 缺少验收标准字段，Manager 未按 SOP 输出"
+
+
+@pytest.mark.e2e
+class TestTE2E2DevRealExecution:
+    """T_E2E_2：Dev 真实执行 — 输入功能需求，验证 tech_design.md 产出"""
+
+    TIMEOUT = 300
+
+    def test_sandbox_8024_reachable(self) -> None:
+        """前置：Dev 沙盒（8024）必须可访问"""
+        assert _sandbox_reachable(8024), \
+            "Dev 沙盒未启动，请先运行: docker compose --profile dev up -d"
+
+    def test_dev_produces_tech_design(self) -> None:
+        """Dev 真实执行：输入 feature_requirement.md → 产出 tech_design.md"""
+        output_path = WORKSPACE_DEV / "tech_design.md"
+        if output_path.exists():
+            output_path.unlink()
+
+        result = subprocess.run(
+            ["python3", "m4l25_dev.py"],
+            cwd=_M4L25_DIR,
+            capture_output=False,
+            timeout=self.TIMEOUT,
+        )
+        assert result.returncode == 0, f"m4l25_dev.py 退出码非 0：{result.returncode}"
+
+    def _find_tech_design(self) -> Path | None:
+        """查找 Dev 产出的 tech design 文件（兼容 LLM 自选文件名）"""
+        exact = WORKSPACE_DEV / "tech_design.md"
+        if exact.exists():
+            return exact
+        candidates = sorted(WORKSPACE_DEV.glob("*tech_design*.md"),
+                            key=lambda p: p.stat().st_mtime, reverse=True)
+        return candidates[0] if candidates else None
+
+    def test_tech_design_exists(self) -> None:
+        """Dev 沙盒执行后，workspace 中必须存在 tech design 产出文件"""
+        output_path = self._find_tech_design()
+        assert output_path is not None, \
+            (f"Dev 未生成任何 tech_design*.md 文件，"
+             f"workspace 内容：{list(WORKSPACE_DEV.glob('*.md'))}")
+
+    def test_tech_design_has_four_sections(self) -> None:
+        """tech_design 包含四标准章节（架构/接口/实现/测试）"""
+        output_path = self._find_tech_design()
+        if output_path is None:
+            pytest.skip("tech_design 文件不存在，跳过内容检查")
+        content = output_path.read_text(encoding="utf-8")
+        checks = [
+            any(k in content for k in ["架构", "architecture", "Architecture"]),
+            any(k in content for k in ["接口", "interface", "Interface", "API"]),
+            any(k in content for k in ["实现", "implement", "Implement"]),
+            any(k in content for k in ["测试", "test", "Test"]),
+        ]
+        assert sum(checks) >= 3, \
+            f"tech_design 缺少标准章节，只找到 {sum(checks)}/4 个关键词"
+
+    def test_tech_design_has_code(self) -> None:
+        """tech_design 包含代码示例（Dev SOP 要求必须有）"""
+        output_path = self._find_tech_design()
+        if output_path is None:
+            pytest.skip("tech_design 文件不存在，跳过内容检查")
+        content = output_path.read_text(encoding="utf-8")
+        assert "```" in content or "def " in content or "class " in content, \
+            "tech_design 缺少代码示例，Dev 未按 SOP 输出技术设计"

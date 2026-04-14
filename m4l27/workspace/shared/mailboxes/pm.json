@@ -1,0 +1,12 @@
+[
+  {
+    "id": "6d0bc53b-cfe3-4a85-acb7-1ece1dc215a6",
+    "from": "manager",
+    "to": "pm",
+    "type": "task_assign",
+    "subject": "产品文档设计任务",
+    "content": "请根据 /mnt/shared/needs/requirements.md 设计产品规格文档，完成后写入 /mnt/shared/design/product_spec.md，并发邮件通知我验收",
+    "timestamp": "2026-04-10T15:10:30.384021+00:00",
+    "read": true
+  }
+]

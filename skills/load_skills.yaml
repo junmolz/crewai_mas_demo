@@ -44,6 +44,17 @@ skills:
     type: reference   # Dev 技术设计 SOP，只读，不启动沙盒
     enabled: true
 
+  # m4l26：任务链与信息传递 Skills
+  - name: workspace-rules
+    path: ./workspace-rules
+    type: reference   # 共享工作区访问规范，直接注入 Agent 上下文
+    enabled: true
+
+  - name: mailbox-ops
+    path: ./mailbox-ops
+    type: task        # 需要执行脚本（filelock JSON 读写），在 AIO-Sandbox 中运行
+    enabled: true
+
   # 预留：参考型 Skill 示例（如品牌规范、代码规范等）
   # - name: brand-guidelines
   #   path: ./brand-guidelines

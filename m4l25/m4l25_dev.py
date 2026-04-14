@@ -109,7 +109,11 @@ class DevCrew:
                 temperature = 0.3,
             ),
             tools = [
-                SkillLoaderTool(sandbox_mount_desc=M4L25_DEV_SANDBOX_MOUNT_DESC),
+                # 💡 核心点：Dev 沙盒独立端口 8024（与 Manager 的 8023 隔离）
+                SkillLoaderTool(
+                    sandbox_mount_desc=M4L25_DEV_SANDBOX_MOUNT_DESC,
+                    sandbox_mcp_url="http://localhost:8024/mcp",
+                ),
             ],
             verbose  = True,
             max_iter = 20,
