@@ -27,11 +27,10 @@ from pathlib import Path
 try:
     from filelock import FileLock
 except ImportError:
-    print(json.dumps({
-        "errcode": 1,
-        "errmsg": "filelock 未安装，请先运行：pip install filelock -q",
-    }))
-    sys.exit(1)
+    import subprocess as _sp
+    _sp.check_call([sys.executable, "-m", "pip", "install", "filelock", "-q"],
+                   stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+    from filelock import FileLock
 
 STATUS_UNREAD      = "unread"
 STATUS_IN_PROGRESS = "in_progress"

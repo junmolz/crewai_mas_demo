@@ -28,8 +28,8 @@ from schemas import RetroProposal                          # noqa: E402
 from tools.log_ops import read_l1, read_l2                 # noqa: E402
 from tools.mailbox_ops import send_mail                    # noqa: E402
 from retro.self_retrospective import (                     # noqa: E402
-    _get_llm_client,
-    _save_proposals,
+    get_llm_client,
+    save_proposals,
 )
 
 
@@ -124,7 +124,7 @@ def run_team_retrospective(
         )
 
     # ── 3. 定位瓶颈 Agent ─────────────────────────────────────────────────────
-    bottleneck = _find_bottleneck(agent_stats)
+    bottleneck = find_bottleneck(agent_stats)
     if bottleneck:
         print(f"[TEAM RETRO] 识别瓶颈 Agent：{bottleneck}，发邮件触发其自我复盘")
         _trigger_agent_self_retro(bottleneck, agent_stats[bottleneck], mailbox_dir)
@@ -135,7 +135,7 @@ def run_team_retrospective(
 
     if proposals:
         proposals_file = mailbox_dir.parent / "proposals" / "proposals.json"
-        _save_proposals(proposals, proposals_file)
+        save_proposals(proposals, proposals_file)
 
     # ── 5. 发周报给 human.json ────────────────────────────────────────────────
     result = {
@@ -154,7 +154,7 @@ def run_team_retrospective(
 # 内部辅助函数
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _find_bottleneck(agent_stats: dict[str, dict]) -> str | None:
+def find_bottleneck(agent_stats: dict[str, dict]) -> str | None:
     """找出平均质量分最低的 Agent（任务数 > 0）。若全员无任务返回 None。"""
     eligible = {
         aid: stats
@@ -223,9 +223,9 @@ def _call_team_llm(summary_text: str) -> list[RetroProposal]:
     """调用 LLM 生成团队级提案，解析失败返回 []。"""
     raw_response = ""
     try:
-        client   = _get_llm_client()
+        client   = get_llm_client()
         response = client.chat.completions.create(
-            model    = "qwen-plus",
+            model    = "glm-5.1",
             messages = [
                 {"role": "system", "content": _TEAM_RETRO_SYSTEM_PROMPT},
                 {"role": "user",   "content": summary_text},

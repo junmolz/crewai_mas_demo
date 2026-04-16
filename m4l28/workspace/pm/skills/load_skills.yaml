@@ -1,0 +1,14 @@
+# PM workspace 专属 Skills 清单（第28课·数字员工的自我进化）
+
+skills:
+  - name: mailbox
+    type: task
+    enabled: true
+
+  - name: product_design
+    type: reference
+    enabled: true
+
+  - name: memory-save
+    type: task
+    enabled: true

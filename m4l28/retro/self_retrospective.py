@@ -40,9 +40,14 @@ from tools.mailbox_ops import send_mail    # noqa: E402
 # LLM 配置
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _get_llm_client() -> OpenAI:
+def get_llm_client() -> OpenAI:
+    api_key = os.environ.get("ALIYUN_API_KEY")
+    if not api_key:
+        raise EnvironmentError(
+            "需要设置 ALIYUN_API_KEY 环境变量才能调用复盘 LLM"
+        )
     return OpenAI(
-        api_key=os.environ["ALIYUN_API_KEY"],
+        api_key=api_key,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
 
@@ -148,7 +153,7 @@ def run_self_retrospective(
 
     # ── 7. 写入 proposals.json + 发 human.json ───────────────────────────────
     if proposals:
-        _save_proposals(proposals, mailbox_dir.parent / "proposals" / "proposals.json")
+        save_proposals(proposals, mailbox_dir.parent / "proposals" / "proposals.json")
         _notify_human(proposals, agent_id, mailbox_dir)
 
     return proposals
@@ -201,9 +206,9 @@ def _call_llm_for_proposals(log_summary: str, agent_id: str) -> list[RetroPropos
     """
     raw_response = ""
     try:
-        client   = _get_llm_client()
+        client   = get_llm_client()
         response = client.chat.completions.create(
-            model    = "qwen-plus",
+            model    = "glm-5.1",
             messages = [
                 {"role": "system", "content": _SELF_RETRO_SYSTEM_PROMPT},
                 {"role": "user",   "content": log_summary},
@@ -229,7 +234,7 @@ def _call_llm_for_proposals(log_summary: str, agent_id: str) -> list[RetroPropos
         return []
 
 
-def _save_proposals(proposals: list[RetroProposal], proposals_file: Path) -> None:
+def save_proposals(proposals: list[RetroProposal], proposals_file: Path) -> None:
     """将提案追加写入 proposals.json（不覆盖已有记录）。"""
     proposals_file.parent.mkdir(parents=True, exist_ok=True)
     lock_path = proposals_file.with_suffix(".lock")

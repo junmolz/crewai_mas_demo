@@ -212,7 +212,7 @@ def test_it4_find_bottleneck_with_seeded_data(seeded_workspace):
     不调用 LLM，直接验证 seed_logs 数据下 _find_bottleneck 能识别 PM 为瓶颈。
     这是一个确定性测试，可以在没有 ALIYUN_API_KEY 的环境中运行。
     """
-    from retro.team_retrospective import _find_bottleneck
+    from retro.team_retrospective import find_bottleneck
     from tools.log_ops import read_l2
 
     logs_dir, _ = seeded_workspace
@@ -236,7 +236,7 @@ def test_it4_find_bottleneck_with_seeded_data(seeded_workspace):
         "manager": _stats(manager_records),
     }
 
-    bottleneck = _find_bottleneck(agent_stats)
+    bottleneck = find_bottleneck(agent_stats)
     assert bottleneck == "pm", (
         f"seed_logs 中 PM 平均质量({agent_stats['pm']['avg_quality']}) "
         f"< Manager({agent_stats['manager']['avg_quality']})，应识别 PM 为瓶颈"

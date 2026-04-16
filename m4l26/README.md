@@ -34,7 +34,7 @@ m4l26/
     ├── pm/                       # PM workspace（同结构）
     │   ├── soul.md / agent.md / user.md
     │   └── skills/
-    │       ├── mailbox/ init_project/ product_design/ memory-save/
+    │       ├── mailbox/ product_design/ memory-save/
     └── shared/                   # 运行时生成（由 init_project Skill 创建）
         ├── needs/requirements.md
         ├── design/product_spec.md
@@ -62,33 +62,37 @@ m4l26/
 ```bash
 cd /path/to/crewai_mas_demo/m4l26
 
-# 清空 shared 运行时目录（由 init_project 重新生成）
-rm -rf workspace/shared
+# 重置邮箱（保留目录结构）
+echo '[]' > workspace/shared/mailboxes/manager.json
+echo '[]' > workspace/shared/mailboxes/pm.json
 
-# 清理产出
+# 清理运行时产出
+rm -f workspace/shared/design/product_spec.md
+rm -f workspace/shared/needs/requirements.md
+rm -f workspace/shared/WORKSPACE_RULES.md
 rm -f workspace/manager/review_result.md
 
-# 清理 session 历史
+# 清理 session 历史和日志
 rm -rf workspace/manager/sessions workspace/pm/sessions
+rm -f agent.log agent.log.wf
 ```
 
 ### 步骤 1：启动沙盒
 
 ```bash
-cd /path/to/crewai_mas_demo
+cd /path/to/crewai_mas_demo/m4l26
 
-docker compose -f m4l26/sandbox-docker-compose.yaml --profile manager --profile pm up -d
+docker compose -f sandbox-docker-compose.yaml --profile manager --profile pm up -d
 
-# 验证（均应有响应）
-curl -s http://localhost:8025/ | head -1   # Manager 沙盒
-curl -s http://localhost:8026/ | head -1   # PM 沙盒
+# 等待沙盒就绪（返回 200 即可）
+curl -s -o /dev/null -w '%{http_code}' http://localhost:8025/   # Manager → 200
+curl -s -o /dev/null -w '%{http_code}' http://localhost:8026/   # PM → 200
 ```
 
 ### 步骤 2：Manager 启动（分配任务）
 
 ```bash
-cd /path/to/crewai_mas_demo/m4l26
-python main.py
+python3 main.py
 ```
 
 Manager 执行：
@@ -99,9 +103,7 @@ Manager 执行：
 ### 步骤 3：PM 启动（执行任务）
 
 ```bash
-# 在另一个终端
-cd /path/to/crewai_mas_demo/m4l26
-python start_pm.py
+python3 start_pm.py
 ```
 
 PM 执行：
@@ -115,8 +117,7 @@ PM 执行：
 ### 步骤 4：Manager 验收
 
 ```bash
-# 再次运行 Manager（检查邮箱 → 验收）
-python main.py
+python3 main.py
 ```
 
 Manager 执行：
@@ -138,19 +139,17 @@ cat workspace/manager/review_result.md
 ### 步骤 6：运行测试
 
 ```bash
-cd /path/to/crewai_mas_demo
-
-# 单元测试（不需要沙盒/API）
-python -m pytest m4l26/test_m4l26.py -v
+# 单元测试（不需要沙盒/API，61 tests）
+python3 -m pytest test_m4l26.py -v
 
 # E2E 集成测试（需要沙盒 + LLM API）
-python -m pytest m4l26/test_m4l26_integration.py -v -s
+python3 -m pytest test_m4l26_integration.py -v -s
 ```
 
 ### 步骤 7：停止沙盒
 
 ```bash
-docker compose -f m4l26/sandbox-docker-compose.yaml --profile manager --profile pm down
+docker compose -f sandbox-docker-compose.yaml --profile manager --profile pm down
 ```
 
 ---
@@ -191,17 +190,12 @@ reset_stale: [in_progress] →[unread]  (超时恢复，崩溃容错)
 → 检查 `workspace/shared/mailboxes/pm.json` 中是否有 `status="unread"` 的消息。
 
 **Q：想清空重来？**
-```bash
-rm -rf workspace/shared workspace/manager/review_result.md
-rm -rf workspace/manager/sessions workspace/pm/sessions
-```
+→ 执行步骤 0 的清理命令，然后从步骤 2 重新开始。
 
 **Q：停止沙盒？**
 ```bash
-docker compose -f m4l26/sandbox-docker-compose.yaml --profile manager --profile pm down
+docker compose -f sandbox-docker-compose.yaml --profile manager --profile pm down
 ```
 
 **Q：模型切换？**
-```bash
-DIGITAL_WORKER_MODEL=qwen-max python main.py
-```
+→ 修改 `main.py` 和 `start_pm.py` 中的 `model` 参数（默认 `glm-5.1`）。

@@ -299,7 +299,7 @@ def test_t8_self_retro_mock_writes_proposals(tmp_path):
     mock_response = MagicMock()
     mock_response.choices[0].message.content = json.dumps(mock_proposal, ensure_ascii=False)
 
-    with patch("retro.self_retrospective._get_llm_client") as mock_client:
+    with patch("retro.self_retrospective.get_llm_client") as mock_client:
         mock_client.return_value.chat.completions.create.return_value = mock_response
 
         proposals = run_self_retrospective(
@@ -430,15 +430,15 @@ def test_t12_read_l2_returns_sorted_by_timestamp(tmp_path):
 
 def test_t13_save_proposals_appends_across_calls(tmp_path):
     """_save_proposals 第二次调用应追加，不覆盖第一次的提案。"""
-    from retro.self_retrospective import _save_proposals
+    from retro.self_retrospective import save_proposals
 
     proposals_file = tmp_path / "proposals" / "proposals.json"
 
     p1 = RetroProposal(**_valid_proposal_dict(target="file_a.md", evidence=["t001"]))
     p2 = RetroProposal(**_valid_proposal_dict(target="file_b.md", evidence=["t002"]))
 
-    _save_proposals([p1], proposals_file)
-    _save_proposals([p2], proposals_file)
+    save_proposals([p1], proposals_file)
+    save_proposals([p2], proposals_file)
 
     saved = json.loads(proposals_file.read_text())
     assert len(saved) == 2, "两次调用后应有2条提案"
@@ -493,12 +493,12 @@ def test_t15_send_mail_rejects_unknown_from_role(tmp_path):
 
 def test_t16_find_bottleneck_returns_none_when_no_tasks():
     """所有 Agent 任务数为0时，_find_bottleneck 应返回 None。"""
-    from retro.team_retrospective import _find_bottleneck
+    from retro.team_retrospective import find_bottleneck
 
     agent_stats = {
         "pm":      {"task_count": 0, "avg_quality": None, "failure_rate": None},
         "manager": {"task_count": 0, "avg_quality": None, "failure_rate": None},
     }
 
-    result = _find_bottleneck(agent_stats)
+    result = find_bottleneck(agent_stats)
     assert result is None, "全员无任务时不应认定瓶颈"

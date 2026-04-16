@@ -1,0 +1,26 @@
+# Manager workspace 专属 Skills 清单（第28课·数字员工的自我进化）
+
+skills:
+  - name: init_project
+    type: task
+    enabled: true
+
+  - name: mailbox
+    type: task
+    enabled: true
+
+  - name: requirements_discovery
+    type: reference
+    enabled: true
+
+  - name: sop_selector
+    type: task
+    enabled: true
+
+  - name: notify_human
+    type: reference
+    enabled: true
+
+  - name: memory-save
+    type: task
+    enabled: true
