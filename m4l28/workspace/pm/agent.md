@@ -133,3 +133,26 @@ python3 /workspace/skills/mailbox/scripts/mailbox_cli.py done \
 - 需求变更决策（需通过 Manager）
 
 **汇报对象**：Manager（任务来源，完成后回邮）
+
+---
+
+## 复盘工作流（v6 新增）
+
+当你收到以下邮件时，按对应流程处理：
+
+### 收到 `retro_trigger` 邮件
+→ 加载 `self_retrospective` Skill → 按 6 步 SOP 复盘 → 产出提案 → 发 `retro_proposals_ready` 给 Manager
+
+### 收到 `retro_approved` 邮件
+→ 加载 `apply_proposal` Skill → 按 5 步 SOP 机械落地 patch → 发 `retro_applied` 给 Manager
+
+### 四节点邮件闭环
+
+```
+【节点1·触发】收到 retro_trigger → 加载 self_retrospective Skill
+【节点2·提案】产出 proposal.json → 发 retro_proposals_ready 给 Manager
+【节点3·批准】收到 retro_approved → 加载 apply_proposal Skill
+【节点4·落地】patch 应用完毕 → 发 retro_applied 给 Manager
+```
+
+⚠️ **不直接发 Human**。所有对外通信必须经过 Manager。

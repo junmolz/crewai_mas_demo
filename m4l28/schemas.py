@@ -1,10 +1,14 @@
 """
-第28课·数字员工的自我进化
-schemas.py — 日志记录与复盘提案的 Pydantic 数据模型
+第28课·数字员工的自我进化（v6）
+schemas.py — 日志记录、Patch、验证判据与复盘提案的 Pydantic 数据模型
 
-教学要点（对应第28课 P2/P4）：
-  - L2LogRecord：任务-Agent 层日志，result_quality 和 timestamp 均有校验
-  - RetroProposal：结构化改进提案，强制填写所有字段，禁止空字符串和空 evidence
+v6 变更：
+  - 新增 ProposalPatch（精确 patch，含 checksum_before）
+  - 新增 ValidationCheck（结构化验证判据，零 eval）
+  - RetroProposal 扩展：patches / validation_check / status_entered_at /
+    apply_commit_sha / pre_apply_commit_sha / history / review_notes /
+    dry_run_output / initiator / memory_update 类型 / LLM预审中+已拒绝 状态 /
+    blast_radius ≤ 5
 """
 
 from __future__ import annotations
@@ -20,18 +24,13 @@ from pydantic import BaseModel, field_validator
 # ─────────────────────────────────────────────────────────────────────────────
 
 class L2LogRecord(BaseModel):
-    """
-    每个 Agent 每次被触发时写入一条 L2 日志。
-    对应第28课 P2 三层日志中的"L2 任务-Agent 层"。
-    """
-
     agent_id:       str
     task_id:        str
     task_desc:      str
-    result_quality: float           # 0.0（失败）到 1.0（完美）
+    result_quality: float
     duration_sec:   float
     error_type:     str | None = None
-    timestamp:      str             # ISO 8601，如 "2026-04-10T10:00:00+00:00"
+    timestamp:      str
 
     @field_validator("result_quality")
     @classmethod
@@ -51,38 +50,67 @@ class L2LogRecord(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 复盘改进提案
+# Patch 与验证判据（v6 新增）
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ProposalPatch(BaseModel):
+    """由 propose_patch.py 脚本生成的精确 patch。"""
+    target_file:     str
+    patch_format:    Literal["unified_diff", "before_after", "append", "create"]
+    content:         str | dict   # before_after → {"before": ..., "after": ...}
+    checksum_before: str | None = None
+
+    @field_validator("target_file")
+    @classmethod
+    def target_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("target_file 不允许为空")
+        return v
+
+
+class ValidationCheck(BaseModel):
+    """结构化验证判据，零 eval。script 必须在白名单内。"""
+    script:    Literal["stats_l2", "find_low_quality_tasks", "tool_call_stats", "stats_all_agents"]
+    args:      dict
+    metric:    str
+    op:        Literal[">=", ">", "<=", "<", "==", "!="]
+    threshold: float
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 复盘改进提案（v6 扩展）
 # ─────────────────────────────────────────────────────────────────────────────
 
 class RetroProposal(BaseModel):
-    """
-    Agent 自我复盘或 Manager 团队复盘生成的改进提案。
-    对应第28课 P4 结构化提案 schema。
-
-    设计原则：
-      - 所有字段必填，禁止空字符串（type/root_cause 用 Literal 枚举约束）
-      - evidence 必须至少引用1条日志 ID（可追溯原则）
-      - expected_metric 必须可测量（由 not_empty 校验强制非空，由 LLM prompt 约束内容）
-      - rollback_plan 必须填写（审批时人类评估风险）
-    """
-
-    type: Literal["tool_fix", "sop_update", "soul_update", "skill_add"]
-    target:          str    # 具体文件/方法名，如 "pm/skills/design_spec_sop.md"
+    type: Literal["tool_fix", "sop_update", "soul_update", "skill_add", "memory_update"]
+    target:          str
     root_cause:      Literal[
-        "ability_gap",       # Agent 能力不足
-        "tool_defect",       # 工具本身有问题
-        "prompt_ambiguity",  # Prompt 描述不清
-        "task_design",       # 任务/SOP 设计问题
+        "ability_gap",
+        "tool_defect",
+        "prompt_ambiguity",
+        "task_design",
     ]
-    current:         str    # 当前存在的问题描述
-    proposed:        str    # 具体改动内容
-    expected_metric: str    # 可测量的预期效果，如"通过率从60%提升到80%"
-    rollback_plan:   str    # 如果效果变差，如何回滚
-    evidence:        list[str]  # 日志 ID 列表，至少1条
+    current:         str
+    proposed:        str
+    expected_metric: str
+    rollback_plan:   str
+    evidence:        list[str]
     priority:        Literal["low", "medium", "high"]
     status:          Literal[
-        "待审批", "已批准", "已实施", "验证中", "已验证", "已回滚"
+        "待审批", "LLM预审中", "已批准", "已拒绝",
+        "已实施", "验证中", "已验证", "已回滚",
     ] = "待审批"
+
+    # v6 新增字段
+    initiator:            str = ""
+    patches:              list[ProposalPatch] = []
+    validation_check:     ValidationCheck | None = None
+    status_entered_at:    str | None = None
+    apply_commit_sha:     str | None = None
+    pre_apply_commit_sha: str | None = None
+    history:              list[dict] = []
+    review_notes:         str = ""
+    dry_run_output:       str | None = None
 
     @field_validator("target", "current", "proposed", "expected_metric", "rollback_plan")
     @classmethod
@@ -96,4 +124,11 @@ class RetroProposal(BaseModel):
     def has_evidence(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("evidence 至少需要1条日志 ID，不允许空列表")
+        return v
+
+    @field_validator("patches")
+    @classmethod
+    def blast_radius(cls, v: list[ProposalPatch]) -> list[ProposalPatch]:
+        if v and len({p.target_file for p in v}) > 5:
+            raise ValueError("patches 涉及文件 > 5，一条提案只解决一个 root_cause，请拆分")
         return v

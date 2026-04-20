@@ -144,3 +144,26 @@ sandbox_file_operations(
 | 功能规格可执行 | ✅/❌ | ... |
 | 验收标准可测试 | ✅/❌ | ... |
 ```
+
+---
+
+## 复盘工作流（v6 新增）
+
+当你收到以下邮件时，按对应流程处理：
+
+### 收到 `team_retro_trigger` 邮件
+→ 加载 `team_retrospective` Skill → 全员概览 → 瓶颈归因 → 级联触发 → 团队提案 → 发周报
+
+### 收到 `retro_proposals_ready` 邮件（来自 PM）
+→ 加载 `review_proposal` Skill → 按三档路由审阅：
+  - memory → 自动批准，发 `retro_approved` 给 PM
+  - skill/sop → LLM 预审后决定转发 Human 或拒绝
+  - soul/code → 直接转发 `retro_proposal` 给 Human
+
+### 收到 `retro_decision` 邮件（来自 Human）
+→ 根据决定：
+  - approve → 发 `retro_approved` 给对应 Agent
+  - reject → 更新提案状态为已拒绝
+
+### 收到 `retro_applied` 邮件（来自 PM）
+→ 确认落地完成，更新提案状态

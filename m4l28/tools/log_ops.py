@@ -1,12 +1,14 @@
 """
-第28课·数字员工的自我进化
+第28课·数字员工的自我进化（v6）
 tools/log_ops.py — 三层日志读写工具
 
 教学要点（对应第28课 P2）：
   三层日志各有用途：
     L1 人类交互层：由 mailbox_ops.send_mail(to="human") 自动写入
-    L2 任务-Agent 层：由 m4l28_run.py 在每步 Crew 结束后手动调用
-    L3 ReAct 循环层：本课演示中通过 seed_logs.py 预置
+    L2 任务-Agent 层：由 l2_task_callback 在每次 Crew 结束后自动写入
+    L3 ReAct 循环层：v6 直接复用 DigitalWorkerCrew 的 session 日志
+       → workspace/<agent>/sessions/<session_id>_raw.jsonl
+       → workspace/<agent>/sessions/index.jsonl（按 task_id 定位行段）
 
 工程约定（与 mailbox_ops.py 风格一致）：
   - 所有写操作使用 FileLock(path.with_suffix(".lock"))
@@ -16,7 +18,8 @@ tools/log_ops.py — 三层日志读写工具
   - 路径规则：
       L1 → logs_dir/l1_human/{msg_id}.json
       L2 → logs_dir/l2_task/{agent_id}_{task_id}.json
-      L3 → logs_dir/l3_react/{agent_id}/{task_id}/step_{N}.json
+      L3（旧）→ logs_dir/l3_react/{agent_id}/{task_id}/step_{N}.json
+      L3（v6）→ workspace/<agent>/sessions/ (raw.jsonl + index.jsonl)
 """
 
 from __future__ import annotations
@@ -198,6 +201,106 @@ def purge_old_l3(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# L3（v6）：从 session 日志读取 ReAct 步骤
+# ─────────────────────────────────────────────────────────────────────────────
+
+def read_session_index(sessions_dir: Path) -> list[dict]:
+    """
+    读取 sessions/index.jsonl，返回全部索引条目。
+
+    每行格式：
+      {"session_id","task_id","agent_id","start_ts","end_ts","start_line","end_line"}
+    """
+    idx_file = sessions_dir / "index.jsonl"
+    if not idx_file.exists():
+        return []
+
+    entries: list[dict] = []
+    for line in idx_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("read_session_index: 跳过损坏行: %s", exc)
+    return entries
+
+
+def read_l3_from_sessions(
+    sessions_dir: Path,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+    only_failed: bool = False,
+) -> list[dict]:
+    """
+    v6：从 session 原始日志读取 L3 级别的 ReAct 步骤。
+
+    流程：
+      1. 读 index.jsonl 定位 session_id + 行范围
+      2. 读 {session_id}_raw.jsonl 的对应行段
+      3. 可选按 task_id / agent_id 过滤
+
+    Args:
+        sessions_dir: workspace/<agent>/sessions/ 目录
+        task_id:      按 task_id 过滤（None 则不过滤）
+        agent_id:     按 agent_id 过滤（None 则不过滤）
+        only_failed:  只返回含 error/fail 关键词的步骤
+
+    Returns:
+        按时间顺序排列的消息列表
+    """
+    entries = read_session_index(sessions_dir)
+    if not entries:
+        return []
+
+    if task_id:
+        entries = [e for e in entries if e.get("task_id") == task_id]
+    if agent_id:
+        entries = [e for e in entries if e.get("agent_id") == agent_id]
+    if not entries:
+        return []
+
+    results: list[dict] = []
+    for entry in entries:
+        raw_file = sessions_dir / f"{entry['session_id']}_raw.jsonl"
+        if not raw_file.exists():
+            logger.warning("read_l3_from_sessions: 文件不存在 %s", raw_file)
+            continue
+
+        start_line = entry.get("start_line", 0)
+        end_line = entry.get("end_line")
+
+        try:
+            lines = raw_file.read_text(encoding="utf-8").splitlines()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("read_l3_from_sessions: 读取失败 %s: %s", raw_file, exc)
+            continue
+
+        for i, line in enumerate(lines):
+            if i < start_line:
+                continue
+            if end_line is not None and i >= end_line:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except Exception:  # noqa: BLE001
+                continue
+
+            if only_failed:
+                content = str(record.get("content", ""))
+                if not any(kw in content.lower() for kw in ("error", "fail", "exception", "traceback")):
+                    continue
+
+            results.append(record)
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # L1：人类交互层（只读，写入由 mailbox_ops 负责）
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -242,3 +345,24 @@ def read_l1(
 def new_task_id() -> str:
     """生成短 task ID，用于演示。"""
     return str(uuid.uuid4())[:8]
+
+
+def count_l2_since(logs_dir: Path, agent_id: str, hours: int = 24) -> int:
+    """统计 agent_id 在最近 hours 小时内的 L2 日志条数（scheduler 用）。"""
+    l2_dir = logs_dir / "l2_task"
+    if not l2_dir.exists():
+        return 0
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    count = 0
+    for f in l2_dir.glob(f"{agent_id}_*.json"):
+        try:
+            record = json.loads(f.read_text(encoding="utf-8"))
+            ts = datetime.fromisoformat(record.get("timestamp", ""))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts >= cutoff:
+                count += 1
+        except Exception:  # noqa: BLE001
+            continue
+    return count

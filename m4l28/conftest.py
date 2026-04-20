@@ -40,11 +40,23 @@ if "tools" not in sys.modules:
     _load_from("tools", _project_root / "tools" / "__init__.py")
 
 # 将 m4l28 专属模块指向 m4l28/tools/
-_load_from("tools.mailbox_ops", _here / "tools" / "mailbox_ops.py")
-_load_from("tools.log_ops",     _here / "tools" / "log_ops.py")
+_load_from("tools.mailbox_ops",  _here / "tools" / "mailbox_ops.py")
+_load_from("tools.log_ops",      _here / "tools" / "log_ops.py")
+_load_from("tools.proposal_ops", _here / "tools" / "proposal_ops.py")
 
 # schemas 指向 m4l28/schemas.py
 _load_from("schemas", _here / "schemas.py")
+
+# hooks 指向 m4l28/hooks/
+if "hooks" not in sys.modules:
+    _load_from("hooks", _here / "hooks" / "__init__.py")
+_load_from("hooks.l2_task_callback", _here / "hooks" / "l2_task_callback.py")
+
+# scheduler
+_load_from("scheduler", _here / "scheduler.py")
+
+# seed_logs
+_load_from("seed_logs", _here / "seed_logs.py")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

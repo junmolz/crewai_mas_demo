@@ -1,5 +1,5 @@
 """
-第28课·数字员工的自我进化
+第28课·数字员工的自我进化（v6）
 seed_logs.py — 预置演示用历史日志
 
 教学说明：
@@ -8,7 +8,8 @@ seed_logs.py — 预置演示用历史日志
 
   预置数据包含：
     - L2 日志：PM Agent 8条任务记录（3条低质量），Manager 3条任务记录
-    - L3 日志：PM 3条低质量任务的 ReAct 步骤（含失败节点）
+    - L3 日志（旧格式）：保留 l3_react/ 目录的步骤文件（兼容）
+    - L3 日志（v6 格式）：写入 sessions/*_raw.jsonl + index.jsonl
     - L1 日志：3条 checkpoint_rejected 记录（人类退回产品设计文档）
 
   接受 base_dir 参数，测试时可传 tmp_path 避免污染真实工作区。
@@ -123,6 +124,45 @@ def seed_logs(base_dir: Path | None = None) -> None:
 
     print(f"[SEED] PM L3 日志已写入：3个失败任务（t001/t003/t006）")
 
+    # ── L3（v6）：写入 session 格式（sessions/index.jsonl + *_raw.jsonl）─────
+    pm_sessions_dir = base_dir / "pm" / "sessions"
+    pm_sessions_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_session_l3(
+        sessions_dir=pm_sessions_dir,
+        session_id="demo_m4l28",
+        agent_id="pm",
+        task_entries=[
+            ("t001", now - timedelta(days=6), [
+                {"role": "assistant", "content": "读取需求文档，了解登录功能要求"},
+                {"role": "tool", "content": "已读取，要求：邮箱登录+密码"},
+                {"role": "assistant", "content": "开始撰写产品规格文档"},
+                {"role": "tool", "content": "已写入基本结构"},
+                {"role": "assistant", "content": "文档完成，发送完成通知"},
+                {"role": "tool", "content": "已发送 task_done 给 manager"},
+            ]),
+            ("t003", now - timedelta(days=5), [
+                {"role": "assistant", "content": "读取需求文档和前一版设计文档"},
+                {"role": "tool", "content": "已读取"},
+                {"role": "assistant", "content": "撰写v2文档，修改登录页面描述"},
+                {"role": "tool", "content": "已更新产品文档"},
+                {"role": "assistant", "content": "检查是否覆盖所有需求点"},
+                {"role": "tool", "content": "Error: 发现缺少错误状态处理，表单验证逻辑缺失"},
+                {"role": "assistant", "content": "补充错误处理，但未完整覆盖"},
+                {"role": "tool", "content": "部分补充"},
+            ]),
+            ("t006", now - timedelta(days=2), [
+                {"role": "assistant", "content": "读取需求文档"},
+                {"role": "tool", "content": "需求：注册流程+移动端优先"},
+                {"role": "assistant", "content": "撰写产品设计文档（桌面端视角）"},
+                {"role": "tool", "content": "已完成桌面端设计"},
+                {"role": "assistant", "content": "Fail: 未考虑移动端适配，直接提交"},
+                {"role": "tool", "content": "已发送"},
+            ]),
+        ],
+    )
+    print("[SEED] PM session L3 日志已写入（v6 格式：sessions/index.jsonl）")
+
     # ── L1 日志：3条人类纠正记录（直接写文件，模拟来自 mailbox_ops 的记录）───
     # 注意：seed_logs 绕过 send_mail() 是有意为之——这里预置的是模拟的历史数据，
     # 而不是真实的 send_mail 调用。真实运行时 L1 由 mailbox_ops.send_mail 自动写入。
@@ -182,6 +222,44 @@ def _write_l3_steps(
                 "timestamp":   ts.isoformat(),
             },
         )
+
+
+def _write_session_l3(
+    sessions_dir: Path,
+    session_id: str,
+    agent_id: str,
+    task_entries: list[tuple[str, datetime, list[dict]]],
+) -> None:
+    """v6：将模拟 L3 数据写入 sessions/*_raw.jsonl + index.jsonl。"""
+    raw_file = sessions_dir / f"{session_id}_raw.jsonl"
+    idx_file = sessions_dir / "index.jsonl"
+
+    line_num = 0
+    if raw_file.exists():
+        line_num = len(raw_file.read_text(encoding="utf-8").splitlines())
+
+    with open(raw_file, "a", encoding="utf-8") as f:
+        with open(idx_file, "a", encoding="utf-8") as idx:
+            for task_id, base_time, messages in task_entries:
+                start_line = line_num
+                for i, msg in enumerate(messages):
+                    ts = base_time + timedelta(minutes=i * 2)
+                    record = {**msg, "ts": ts.isoformat()}
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    line_num += 1
+                end_line = line_num
+
+                end_time = base_time + timedelta(minutes=len(messages) * 2)
+                idx_entry = {
+                    "session_id": session_id,
+                    "task_id": task_id,
+                    "agent_id": agent_id,
+                    "start_ts": base_time.isoformat(),
+                    "end_ts": end_time.isoformat(),
+                    "start_line": start_line,
+                    "end_line": end_line,
+                }
+                idx.write(json.dumps(idx_entry, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":

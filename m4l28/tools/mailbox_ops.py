@@ -1,15 +1,13 @@
 """
-第28课·数字员工的自我进化
+第28课·数字员工的自我进化（v6）
 tools/mailbox_ops.py
 
-在第27课 mailbox_ops.py 基础上新增：
-  当 to="human" 时，send_mail 同时向 L1 日志目录写入一条人类交互记录。
-  L1 日志是复盘分析中"最有价值的数据"（人类每次纠正的记录）。
-
-与 m4l27 的差异：
-  + send_mail 新增 L1 自动写入（对调用方透明，不改函数签名）
-  + 新增内部函数 _write_l1_log
-  其余逻辑（单一接口约束、FileLock、角色校验）完全不变
+v6 变更（基于第27课）：
+  + send_mail 新增 L1 自动写入（to="human" 时，对调用方透明）
+  + 新增 project_id 可选字段（语义 task 标识，由 init_project Skill 创建）
+  + type 白名单校验：只允许已知消息类型，防止拼写错误导致路由丢失
+  + 新增复盘相关类型：retro_trigger / retro_proposals_ready / retro_proposal /
+    retro_decision / retro_approved / retro_applied / apply_locked / retro_stuck
 """
 
 from __future__ import annotations
@@ -23,6 +21,26 @@ from filelock import FileLock
 
 _VALID_TO_ROLES   = {"manager", "pm", "human"}
 _VALID_FROM_ROLES = {"manager", "pm"}
+
+_VALID_TYPES = {
+    # 业务流程
+    "task_assign",
+    "task_result",
+    "checkpoint_request",
+    "checkpoint_approved",
+    "checkpoint_rejected",
+    "weekly_report",
+    # 复盘流程（v6）
+    "retro_trigger",
+    "team_retro_trigger",
+    "retro_proposals_ready",
+    "retro_proposal",
+    "retro_decision",
+    "retro_approved",
+    "retro_applied",
+    "apply_locked",
+    "retro_stuck",
+}
 
 
 def _inbox_path(mailbox_dir: Path, role: str) -> Path:
@@ -74,18 +92,26 @@ def send_mail(
     type_: str,
     subject: str,
     content: str,
+    project_id: str | None = None,
 ) -> str:
     """
     发送消息到目标角色的邮箱。
 
-    第28课新增：当 to="human" 时，同时向 L1 日志写入一条记录。
-    其余逻辑与第27课完全相同。
+    v6 变更：
+      - 新增 project_id（可选，语义 task 标识）
+      - type 白名单校验
+      - 当 to="human" 时，同时向 L1 日志写入一条记录
 
     单一接口约束：to=human 时 from_ 必须是 manager。
     """
     if from_ not in _VALID_FROM_ROLES:
         raise ValueError(
             f"未知发件角色 '{from_}'，允许值：{_VALID_FROM_ROLES}"
+        )
+
+    if type_ not in _VALID_TYPES:
+        raise ValueError(
+            f"未知消息类型 '{type_}'，允许值：{sorted(_VALID_TYPES)}"
         )
 
     if to == "human" and from_ != "manager":
@@ -109,6 +135,9 @@ def send_mail(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "read":      False,
     }
+
+    if project_id is not None:
+        message["project_id"] = project_id
 
     with FileLock(str(lock)):
         messages = _read_inbox_file(inbox)

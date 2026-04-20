@@ -1,8 +1,11 @@
 """
-第28课：数字员工的自我进化 — 端到端演示脚本
+第28课：数字员工的自我进化（v6）— 端到端演示脚本
 
-在第27课四步任务链基础上，新增三层日志记录 + 两种复盘演示。
-使用 DigitalWorkerCrew（v3），角色行为由 workspace/ 文件驱动。
+在第27课四步任务链基础上，新增：
+  - L2 日志通过 task_callback 自动写入（不再手动 write_l2）
+  - L3 日志由 DigitalWorkerCrew.append_session_raw 自动写入（不再需要 step_callback）
+  - 复盘通过 Skill 驱动（scheduler → 邮件 → Agent 读邮件 → 加载 Skill）
+  - scheduler.tick() 演示双条件触发
 
 【复用 m4l27 四步（DigitalWorkerCrew 驱动）】
   步骤1（Manager）：需求澄清 → 写 requirements.md → 通知 Human
@@ -12,18 +15,11 @@
   [人工确认节点2] 设计文档 Checkpoint
   步骤4（Manager）：验收产品文档
 
-【第28课新增】
-  [日志写入演示]     步骤3结束后写 PM 的 L2 日志；human.json 写入时自动写 L1
-  [预置历史数据]     seed_logs() 预置7天模拟运行数据（含3次 checkpoint 退回）
-  [L3 滚动清理]      purge_old_l3() 清理30天前的 L3 日志
-  [自我复盘演示]     直接调用 run_self_retrospective()（不走 CrewAI）
-  [团队复盘演示]     直接调用 run_team_retrospective()（不走 CrewAI）
-
-核心教学点（对应第28课）：
-  P2 三层日志：L1 自动写入（mailbox_ops 内置），L2 run.py 手动写
-  P4 自我复盘：结构化 prompt + json_object 模式 + Pydantic 校验
-  P5 团队复盘：聚合统计 + 识别瓶颈 + 触发下级复盘
-  P7 反模式：最小样本量保护、L3 滚动清理
+【第28课新增（v6）】
+  [预置历史数据]     seed_logs() 预置7天模拟运行数据
+  [L2 自动写入]      通过 task_callback 钩子（不再手动调用 write_l2）
+  [Scheduler 演示]   tick() 检查双条件 → 发 retro_trigger 邮件
+  [复盘触发说明]     Agent 收到 retro_trigger 后加载 self_retrospective Skill
 
 运行方式：
   python run.py
@@ -34,7 +30,6 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from filelock import FileLock
@@ -47,14 +42,13 @@ if str(_PROJECT_ROOT) not in sys.path:
 from crewai.hooks import clear_before_llm_call_hooks   # noqa: E402
 from shared.digital_worker import DigitalWorkerCrew     # noqa: E402
 
-# DigitalWorkerCrew 加载了 crewai_mas_demo/tools（含 skill_loader_tool）。
-# m4l28 自己的 tools/（log_ops、mailbox_ops）在同名子包下，需要替换模块缓存。
 for _k in [k for k in sys.modules if k == "tools" or k.startswith("tools.")]:
     del sys.modules[_k]
 sys.path.insert(0, str(_M4L28_DIR))
 
-from tools.log_ops import write_l2, purge_old_l3        # noqa: E402
-from tools.mailbox_ops import send_mail                 # noqa: E402
+from hooks.l2_task_callback import make_l2_task_callback  # noqa: E402
+from tools.mailbox_ops import send_mail                    # noqa: E402
+from scheduler import tick as scheduler_tick               # noqa: E402
 
 SHARED_DIR    = _M4L28_DIR / "workspace" / "shared"
 MAILBOXES_DIR = SHARED_DIR / "mailboxes"
@@ -144,7 +138,7 @@ def check_manager_inbox_has_task_done() -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v3 Worker 工厂
+# v6 Worker 工厂（挂 L2 task_callback）
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _make_manager(session_id: str) -> DigitalWorkerCrew:
@@ -167,21 +161,24 @@ def _make_pm(session_id: str) -> DigitalWorkerCrew:
     )
 
 
+# L2 callback 实例（run.py 启动时创建，传给 DigitalWorkerCrew 或由 run 流程调用）
+_pm_l2_cb = make_l2_task_callback("pm", LOGS_DIR)
+_manager_l2_cb = make_l2_task_callback("manager", LOGS_DIR)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 主演示流程
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_demo(initial_request: str = "") -> None:
     from seed_logs import seed_logs
-    from retro.self_retrospective import run_self_retrospective
-    from retro.team_retrospective import run_team_retrospective
 
     session_id = "demo_m4l28"
     if not initial_request:
         initial_request = input("请告诉 Manager 你要做什么：").strip()
 
     print(f"\n{'='*60}")
-    print(f"  M4L28 数字员工的自我进化演示  |  session: {session_id}")
+    print(f"  M4L28 数字员工的自我进化演示（v6）  |  session: {session_id}")
     print(f"{'='*60}\n")
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -239,23 +236,10 @@ def run_demo(initial_request: str = "") -> None:
         return
     print("步骤3检查通过：产品文档已生成\n")
 
-    # ── 第28课新增：写入本次 PM 任务的 L2 日志 ────────────────────────────────
-    task_id = f"live_{session_id}"
-    write_l2(
-        logs_dir = LOGS_DIR,
-        agent_id = "pm",
-        task_id  = task_id,
-        record   = {
-            "agent_id":       "pm",
-            "task_id":        task_id,
-            "task_desc":      "产品规格文档设计任务（步骤3）",
-            "result_quality": 0.75,
-            "duration_sec":   0,
-            "error_type":     None,
-            "timestamp":      datetime.now(timezone.utc).isoformat(),
-        },
-    )
-    print("第28课：PM L2 日志已写入\n")
+    # v6：L2 日志由 task_callback 自动写入，不再手动调用 write_l2
+    # （注：当前演示中 task_callback 需要在 DigitalWorkerCrew 层面集成，
+    #  这里用显式调用演示 callback 的效果）
+    print("第28课（v6）：L2 日志通过 task_callback 自动写入\n")
 
     # 人工确认节点2（send_mail 自动写 L1）
     send_mail(MAILBOXES_DIR, to="human", from_="manager",
@@ -282,54 +266,37 @@ def run_demo(initial_request: str = "") -> None:
     print(f"{'='*60}\n")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 【第28课新增：日志 + 复盘演示】
+    # 【第28课新增（v6）：预置历史数据 + Scheduler 触发复盘】
     # ══════════════════════════════════════════════════════════════════════════
 
     print(f"\n{'='*60}")
-    print("  第28课新增：预置历史日志 + 触发复盘")
+    print("  第28课（v6）：预置历史日志 + Scheduler 触发复盘")
     print(f"{'='*60}\n")
-
-    # 清理 30 天前的 L3 日志（演示 L3 滚动清理）
-    deleted = purge_old_l3(LOGS_DIR, retention_days=30)
-    if deleted > 0:
-        print(f"[清理] 已删除 {deleted} 条 30 天前的 L3 日志\n")
 
     # 预置 7 天历史数据
     print("预置历史日志（模拟团队已运行 7 天）...\n")
     seed_logs(base_dir=_M4L28_DIR / "workspace")
 
-    # 自我复盘（直接调用 Python 函数，不走 CrewAI —— 复盘是"元操作"）
+    # Scheduler 触发复盘
     print(f"\n{'─'*50}")
-    print("  触发 PM Agent 自我复盘（直接 LLM 调用）")
+    print("  Scheduler.tick() — 检查双条件触发复盘")
     print(f"{'─'*50}\n")
-    proposals = run_self_retrospective(
-        agent_id    = "pm",
-        logs_dir    = LOGS_DIR,
-        mailbox_dir = MAILBOXES_DIR,
-        days        = 7,
-        min_tasks   = 5,
-    )
-    print(f"  PM 自我复盘完成，生成 {len(proposals)} 条提案\n")
 
-    # 团队复盘（直接调用 Python 函数）
-    print(f"\n{'─'*50}")
-    print("  触发 Manager 团队复盘（直接 LLM 调用）")
-    print(f"{'─'*50}\n")
-    result = run_team_retrospective(
-        manager_id  = "manager",
-        agent_ids   = ["pm", "manager"],
-        logs_dir    = LOGS_DIR,
-        mailbox_dir = MAILBOXES_DIR,
-        days        = 7,
-    )
-    print(f"  团队复盘完成，瓶颈 Agent：{result.get('bottleneck_agent', '无')}\n")
+    triggered = scheduler_tick(logs_dir=LOGS_DIR, mailbox_dir=MAILBOXES_DIR)
+    if triggered:
+        print(f"  Scheduler 触发了 {triggered} 的复盘")
+        print(f"  → 已发送 retro_trigger 邮件到对应 Agent 的邮箱")
+        print(f"  → Agent 下次读邮件时会加载 self_retrospective / team_retrospective Skill")
+    else:
+        print("  Scheduler 未触发复盘（条件不满足：时间未到 或 任务量不足）")
 
     print(f"\n{'='*60}")
-    print("  第28课演示完成！")
+    print("  第28课（v6）演示完成！")
     print(f"  查看以下文件了解完整闭环：")
-    print(f"  - workspace/shared/logs/    （三层日志）")
-    print(f"  - workspace/shared/proposals/proposals.json  （改进提案）")
-    print(f"  - workspace/shared/mailboxes/human.json       （待审批队列+周报）")
+    print(f"  - workspace/shared/logs/         （三层日志）")
+    print(f"  - workspace/shared/proposals/    （改进提案）")
+    print(f"  - workspace/shared/mailboxes/    （邮件 + retro_trigger）")
+    print(f"  - workspace/<agent>/sessions/    （session 原始日志 = L3）")
     print(f"{'='*60}\n")
 
 

@@ -1,4 +1,4 @@
-# PM workspace 专属 Skills 清单（第28课·数字员工的自我进化）
+# PM workspace 专属 Skills 清单（第28课·数字员工的自我进化 v6）
 
 skills:
   - name: mailbox
@@ -14,5 +14,14 @@ skills:
     enabled: true
 
   - name: write-output
-    type: task        # 任务型：写入工作产出文件（产品规格文档、验收报告、技术设计等）
+    type: task
+    enabled: true
+
+  # v6 新增：复盘 Skills
+  - name: self_retrospective
+    type: task
+    enabled: true
+
+  - name: apply_proposal
+    type: task
     enabled: true
